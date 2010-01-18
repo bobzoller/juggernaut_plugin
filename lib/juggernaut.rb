@@ -1,5 +1,7 @@
 require "yaml"
 require "socket"
+require 'net/protocol'
+require "timeout"
 
 module Juggernaut
   CONFIG = YAML::load(ERB.new(IO.read("#{RAILS_ROOT}/config/juggernaut_hosts.yml")).result).freeze
@@ -109,13 +111,14 @@ module Juggernaut
         begin
           hash[:secret_key] = address[:secret_key] if address[:secret_key]
           
-          @socket = TCPSocket.new(address[:host], address[:port])
+          s = timeout(CONFIG[:open_timeout] || 30) { TCPSocket.new(address[:host], address[:port]) }
+          @socket = Net::InternetMessageIO.new(s)
+          @socket.read_timeout = CONFIG[:read_timeout] || 60
           # the \0 is to mirror flash
-          @socket.print(hash.to_json + CR)
-          @socket.flush
-          res << @socket.readline(CR) if response
+          @socket.write(hash.to_json + CR)
+          res << @socket.readuntil(CR) if response
         ensure
-          @socket.close if @socket and !@socket.closed?
+          s.close if s and !s.closed?
         end
       end
       res.collect {|r| ActiveSupport::JSON.decode(r.chomp!(CR)) } if response
